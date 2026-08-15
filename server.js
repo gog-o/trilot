@@ -21,7 +21,8 @@ let gameState = {
     ledSuit: null,
     phase: 'WAITING',
     highestBid: { type: null, value: 0, playerId: null },
-    passCount: 0
+    passCount: 0,
+    lastTrickWinner: null // Следене на победителя за последно 10
 };
 
 const bidValues = { '♦': 1, '♠': 2, '♥': 3, 'БЕЗ_КОЗ': 4, 'ВСИЧКО_КОЗ': 5 };
@@ -150,6 +151,7 @@ function startNewRound() {
     gameState.phase = 'BIDDING';
     gameState.highestBid = { type: null, value: 0, playerId: null };
     gameState.passCount = 0;
+    gameState.lastTrickWinner = null;
 
     if (gameState.dealerIndex === -1) {
         gameState.dealerIndex = Math.floor(Math.random() * 3);
@@ -213,7 +215,18 @@ function sendGameStateToAll() {
     });
 }
 
+function getPlayerDisplay(id) {
+    const idx = players.indexOf(id);
+    return idx !== -1 ? `Играч ${idx + 1}` : "Неизвестен";
+}
+
 function processEndRound() {
+    // Начисляване на бонус "Последно 10" на играча, затворил последната ръка
+    if (gameState.lastTrickWinner) {
+        gameState.roundScores[gameState.lastTrickWinner] += 10;
+        console.log(`Бонус последно 10 отива при: ${getPlayerDisplay(gameState.lastTrickWinner)}`);
+    }
+
     let finalScoresThisRound = {};
     players.forEach(id => {
         finalScoresThisRound[id] = gameState.roundScores[id] + gameState.announcements[id].points;
@@ -231,14 +244,22 @@ function processEndRound() {
         if (id !== announcerId && finalScoresThisRound[id] > announcerPoints) isInside = true;
     });
 
+    let roundLog = {};
     if (isInside) {
         const bonus = Math.floor(announcerPoints / 2);
         players.forEach(id => {
-            if (id === announcerId) gameState.totalScores[id] += 0;
-            else gameState.totalScores[id] += finalScoresThisRound[id] + bonus;
+            if (id === announcerId) {
+                roundLog[id] = 0;
+            } else {
+                roundLog[id] = finalScoresThisRound[id] + bonus;
+                gameState.totalScores[id] += roundLog[id];
+            }
         });
     } else {
-        players.forEach(id => gameState.totalScores[id] += finalScoresThisRound[id]);
+        players.forEach(id => {
+            roundLog[id] = finalScoresThisRound[id];
+            gameState.totalScores[id] += roundLog[id];
+        });
     }
 
     let winner = null;
@@ -249,11 +270,16 @@ function processEndRound() {
     });
 
     if (winner) {
-        io.emit('gameOver', { winner, scores: gameState.totalScores });
+        io.emit('gameOver', { winner: getPlayerDisplay(winner), scores: gameState.totalScores });
         players.forEach(id => gameState.totalScores[id] = 0);
         gameState.dealerIndex = -1;
     } else {
-        io.emit('roundOver', { scores: gameState.totalScores });
+        // Показване на резултатите от току-що завършилия кръг на български език
+        let details = "Точки от този кръг:\n";
+        players.forEach(id => {
+            details += `${getPlayerDisplay(id)}: ${roundLog[id] || 0} т. (Общо: ${gameState.totalScores[id]} т.)\n`;
+        });
+        io.emit('roundOver', { details });
         startNewRound();
     }
 }
@@ -275,7 +301,7 @@ io.on('connection', (socket) => {
             if (gameState.passCount === 3 && !gameState.highestBid.type) {
                 startNewRound();
                 return;
-            } else if (gameState.passCount === 2 && gameState.highestBid.type) {
+		} else if (gameState.passCount === 2 && gameState.highestBid.type) {
                 finishDealing();
                 return;
             }
@@ -300,7 +326,8 @@ io.on('connection', (socket) => {
         if (playerIndex !== gameState.currentTurnIndex) return;
 
         const card = gameState.hands[socket.id][cardIndex];
-	if (gameState.currentTrick.length > 0 && card.value !== '3') {
+        
+        if (gameState.currentTrick.length > 0 && card.value !== '3') {
             const hasLedSuit = gameState.hands[socket.id].some(c => c.suit === gameState.ledSuit);
             
             if (hasLedSuit && card.suit !== gameState.ledSuit) {
@@ -316,8 +343,8 @@ io.on('connection', (socket) => {
                 });
 
                 const myPower = getCardPower(card, gameState.ledSuit, gameState.gameType);
-                const hasStrongerCard = gameState.hands[socket.id].some(c =>
-                    c.suit === gameState.ledSuit &&
+                const hasStrongerCard = gameState.hands[socket.id].some(c => 
+                    c.suit === gameState.ledSuit && 
                     getCardPower(c, gameState.ledSuit, gameState.gameType) > highestTrickPower
                 );
 
@@ -334,11 +361,12 @@ io.on('connection', (socket) => {
 
         gameState.hands[socket.id].splice(cardIndex, 1);
         gameState.currentTrick.push({ playerId: socket.id, card });
+        
         gameState.currentTurnIndex = (gameState.currentTurnIndex + 2) % 3;
 
         if (gameState.currentTrick.length === 3) {
             setTimeout(() => {
-                let winnerCardItem = gameState.currentTrick[0];
+                let winnerCardItem = gameState.currentTrick;
                 let maxPower = getCardPower(winnerCardItem.card, gameState.ledSuit, gameState.gameType);
 
                 for (let i = 1; i < 3; i++) {
@@ -356,12 +384,13 @@ io.on('connection', (socket) => {
 
                 const trickWinnerId = winnerCardItem.playerId;
                 gameState.roundScores[trickWinnerId] += trickPoints;
-
+                gameState.lastTrickWinner = trickWinnerId; // Запаметяваме последно взелия взятка
+                
                 gameState.currentTurnIndex = players.indexOf(trickWinnerId);
                 gameState.currentTrick = [];
                 gameState.ledSuit = null;
 
-                const checkPlayerId = players[0];
+                const checkPlayerId = players;
                 if (gameState.hands[checkPlayerId].length === 0) {
                     processEndRound();
                 } else {
