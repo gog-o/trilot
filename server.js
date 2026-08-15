@@ -27,7 +27,7 @@ let gameState = {
 const bidValues = { '♦': 1, '♠': 2, '♥': 3, 'БЕЗ_КОЗ': 4, 'ВСИЧКО_КОЗ': 5 };
 
 function createDeck() {
-    const suits = ['♦', '♠', '♥']; // Подредени по вашето желание за сортиране
+    const suits = ['♦', '♠', '♥'];
     const values = ['3', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
     let deck = [];
     for (let suit of suits) {
@@ -46,34 +46,25 @@ function shuffle(deck) {
     return deck;
 }
 
-// Позиция/Сила на картите в йерархията
 function getCardPower(card, ledSuit, gameType) {
     const value = card.value;
-    
-    // Тройката в исканата боя е сила 1, в друга боя е 0 (винаги най-слаба)
     if (value === '3') return (card.suit === ledSuit) ? 1 : 0;
 
-    // Проверка за игра на Боя (една боя е коз)
     const isSingleSuitTrump = ['♦', '♠', '♥'].includes(gameType);
-    
-    // Ако се цака с коз върху обикновена боя
     if (isSingleSuitTrump && card.suit === gameType && ledSuit !== gameType) {
         const trumpPowerMap = { '7': 20, '8': 21, 'Q': 22, 'K': 23, '10': 24, 'A': 25, '9': 26, 'J': 27 };
         return trumpPowerMap[value] || 0;
     }
 
-    // Ако картата не е от исканата боя и не е коз, тя няма никаква сила (0)
     if (card.suit !== ledSuit && (!isSingleSuitTrump || card.suit !== gameType)) {
         return 0;
     }
 
-    // Сила при Козов режим (Всичко коз или текущата козова боя)
-    if (gameType === '橫ВСИЧКО_КОЗ' || gameType === 'ВСИЧКО_КОЗ' || (isSingleSuitTrump && card.suit === gameType)) {
+    if (gameType === 'ВСИЧКО_КОЗ' || (isSingleSuitTrump && card.suit === gameType)) {
         const powerMap = { '7': 2, '8': 3, 'Q': 4, 'K': 5, '10': 6, 'A': 7, '9': 8, 'J': 9 };
         return powerMap[value] || 0;
     } 
     
-    // Сила при Некозов режим (Без коз или некозова боя на игра на боя)
     const powerMap = { '7': 2, '8': 3, '9': 4, 'J': 5, 'Q': 6, 'K': 7, '10': 8, 'A': 9 };
     return powerMap[value] || 0;
 }
@@ -112,14 +103,12 @@ function getStandardCardPoints(card, gameType, ledSuit) {
     return 0;
 }
 
-// Сортиране по Каро, Пика, Купа и по сила вътре в боята
 function sortHand(hand, gameType) {
     const suitOrder = { '♦': 1, '♠': 2, '♥': 3 };
     return hand.sort((a, b) => {
         if (a.suit !== b.suit) {
             return suitOrder[a.suit] - suitOrder[b.suit];
         }
-        // Ако са от една боя, ги подреждаме по сила възходящо
         return getCardPower(a, a.suit, gameType) - getCardPower(b, b.suit, gameType);
     });
 }
@@ -179,7 +168,7 @@ function startNewRound() {
     for (let k = 0; k < 3; k++) {
         let pId = players[currentDealIndex];
         gameState.hands[pId].push(...gameState.deck.splice(0, 6));
-        sortHand(gameState.hands[pId], 'БЕЗ_КОЗ'); // Сортиране в началото
+        sortHand(gameState.hands[pId], 'БЕЗ_КОЗ');
         currentDealIndex = (currentDealIndex + 2) % 3;
     }
 
@@ -197,7 +186,7 @@ function finishDealing() {
         let pId = players[currentDealIndex];
         gameState.hands[pId].push(...gameState.deck.splice(0, 3));
         gameState.announcements[pId] = evaluateAnnouncements(gameState.hands[pId], gameState.gameType);
-        sortHand(gameState.hands[pId], gameState.gameType); // Пресортиране след пълното раздаване
+        sortHand(gameState.hands[pId], gameState.gameType);
         currentDealIndex = (currentDealIndex + 2) % 3;
     }
 
@@ -294,10 +283,11 @@ io.on('connection', (socket) => {
             const bidVal = bidValues[bidType] || 0;
             if (bidVal > gameState.highestBid.value) {
                 gameState.highestBid = { type: bidType, value: bidVal, playerId: socket.id };
-		gameState.passCount = 0;
-        } else {
-            socket.emit('errorMsg', 'Трябва да наддадете по-висока игра!');
-            return;
+                gameState.passCount = 0;
+            } else {
+                socket.emit('errorMsg', 'Трябва да наддадете по-висока игра!');
+                return;
+            }
         }
 
         gameState.currentTurnIndex = (gameState.currentTurnIndex + 2) % 3;
@@ -310,8 +300,7 @@ io.on('connection', (socket) => {
         if (playerIndex !== gameState.currentTurnIndex) return;
 
         const card = gameState.hands[socket.id][cardIndex];
-        
-        if (gameState.currentTrick.length > 0 && card.value !== '3') {
+	if (gameState.currentTrick.length > 0 && card.value !== '3') {
             const hasLedSuit = gameState.hands[socket.id].some(c => c.suit === gameState.ledSuit);
             
             if (hasLedSuit && card.suit !== gameState.ledSuit) {
@@ -319,7 +308,6 @@ io.on('connection', (socket) => {
                 return;
             }
 
-            // ПРАВИЛО: Валидация на вдигането спрямо НАЙ-СИЛНАТА карта на масата до момента
             if (gameTypeIsTrump(gameState.gameType, gameState.ledSuit) && card.suit === gameState.ledSuit) {
                 let highestTrickPower = 0;
                 gameState.currentTrick.forEach(item => {
@@ -328,12 +316,11 @@ io.on('connection', (socket) => {
                 });
 
                 const myPower = getCardPower(card, gameState.ledSuit, gameState.gameType);
-                const hasStrongerCard = gameState.hands[socket.id].some(c => 
-                    c.suit === gameState.ledSuit && 
+                const hasStrongerCard = gameState.hands[socket.id].some(c =>
+                    c.suit === gameState.ledSuit &&
                     getCardPower(c, gameState.ledSuit, gameState.gameType) > highestTrickPower
                 );
 
-                // Задължен си да вдигнеш, само ако имаш карта в ръката, биеща най-силната на масата
                 if (hasStrongerCard && myPower <= highestTrickPower) {
                     socket.emit('errorMsg', 'Трябва да качите над най-силната карта на масата!');
                     return;
@@ -347,10 +334,8 @@ io.on('connection', (socket) => {
 
         gameState.hands[socket.id].splice(cardIndex, 1);
         gameState.currentTrick.push({ playerId: socket.id, card });
-        
         gameState.currentTurnIndex = (gameState.currentTurnIndex + 2) % 3;
 
-        // Когато тримата хвърлят карти, определяме правилния притежател на взятката
         if (gameState.currentTrick.length === 3) {
             setTimeout(() => {
                 let winnerCardItem = gameState.currentTrick[0];
@@ -371,7 +356,7 @@ io.on('connection', (socket) => {
 
                 const trickWinnerId = winnerCardItem.playerId;
                 gameState.roundScores[trickWinnerId] += trickPoints;
-                
+
                 gameState.currentTurnIndex = players.indexOf(trickWinnerId);
                 gameState.currentTrick = [];
                 gameState.ledSuit = null;
