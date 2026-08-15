@@ -209,7 +209,7 @@ function createSequenceObject(cardsArray, suit) {
     let len = cardsArray.length;
     let highestCard = cardsArray[cardsArray.length - 1].value;
     let pts = 20; 
-    let type = "Терц";
+    let type = "Терцa";
     if (len === 4) { pts = 40; type = "Кварта"; }
     else if (len >= 5) { pts = 60; type = "Квинта"; }
     return {
@@ -595,4 +595,4 @@ function gameTypeIsTrump(gameType, ledSuit) {
     return false;
 }
 const PORT = process.env.PORT || 3000;
-http.listen(PORT, () => console.log("Сървърът на ... порт " + PORT));
+http.listen(PORT, () => console.log("Сървърът на Трилот работи на порт " + PORT));
