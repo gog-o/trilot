@@ -202,7 +202,7 @@ function findIndividualAnnouncements(hand, gameType) {
             } else {
                 if (!filteredTriads.includes(overlap)) filteredTriads.push(overlap);
             }
-        } else {aa
+        } else {
             filteredSequences.push(seq);
         }
     });
