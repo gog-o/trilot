@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <title>Трилот - Игра за Трима</title>
+    <style>
+        body { background-color: #1b5e20; color: white; font-family: Arial, sans-serif; margin: 0; overflow: hidden; }
+        #game-layout { position: relative; width: 100vw; height: 100vh; }
+        .player-zone { position: absolute; padding: 10px; background: rgba(0,0,0,0.4); border-radius: 8px; text-align: center; }
+        #my-zone { bottom: 20px; left: 50%; transform: translateX(-50%); }
+        #left-zone { top: 80px; left: 40px; }
+        #right-zone { top: 80px; right: 40px; }
+        .cards-container { display: flex; gap: 8px; margin-top: 8px; }
+        .card { width: 70px; height: 100px; background: white; color: black; border-radius: 6px; display: flex; flex-direction: column; justify-content: center; align-items: center; font-size: 20px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
+        .card.red { color: red; }
+        .card:hover { transform: translateY(-10px); }
+        #table { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 300px; height: 200px; border: 2px dashed rgba(255,255,255,0.5); border-radius: 50%; display: flex; justify-content: center; align-items: center; gap: 15px; }
+        #scoreboard { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.7); padding: 10px 20px; border-radius: 5px; text-align: center; z-index: 10; }
+        #turn-indicator { color: #ffeb3b; font-weight: bold; margin-top: 5px; }
+        
+        /* Прозорец за наддаване */
+        #bidding-panel { display: none; background: rgba(0,0,0,0.9); padding: 15px; border-radius: 10px; margin-top: 10px; }
+        .bid-btn { padding: 8px 15px; margin: 3px; font-weight: bold; cursor: pointer; background: #fff; border: none; border-radius: 4px; }
+        .bid-btn:hover { background: #ffeb3b; }
+    </style>
+</head>
+<body>
+
+<div id="game-layout">
+    <div id="scoreboard">
+        <div id="scores-text">Изчакване на общо 3-ма играчи за Трилот...</div>
+        <div id="game-info">Фаза: Изчакване</div>
+        <div id="turn-indicator"></div>
+        
+        <!-- Панел за наддаване -->
+        <div id="bidding-panel">
+            <div>Наддайте по-високо:</div>
+            <button class="bid-btn" onclick="sendBid('♦')">♦ Каро</button>
+            <button class="bid-btn" onclick="sendBid('♥')">♥ Купа</button>
+            <button class="bid-btn" onclick="sendBid('♠')">♠ Пика</button>
+            <button class="bid-btn" onclick="sendBid('БЕЗ_КОЗ')">Без Коз</button>
+            <button class="bid-btn" onclick="sendBid('ВСИЧКО_КОЗ')">Всичко Коз</button>
+            <button class="bid-btn" style="background:#ff5252; color:white;" onclick="sendBid('ПАС')">ПАС</button>
+        </div>
+    </div>
+
+    <div id="table"></div>
+
+    <div id="left-zone" class="player-zone"><div>Опонент 1</div><div id="left-count">Карти: 0</div></div>
+    <div id="right-zone" class="player-zone"><div>Опонент 2</div><div id="right-count">Карти: 0</div></div>
+
+    <div id="my-zone" class="player-zone">
+        <div>Вашите карти</div>
+        <div id="my-cards" class="cards-container"></div>
+    </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+    const socket = io();
+
+    function sendBid(type) {
+        socket.emit('submitBid', type);
+    }
+
+    socket.on('gameState', (state) => {
+        let scoreStr = "Общ резултат: ";
+        Object.keys(state.totalScores).forEach((id, idx) => {
+            scoreStr += `Играч ${idx+1}: ${state.totalScores[id]} т. | `;
+        });
+        document.getElementById('scores-text').innerText = scoreStr;
+
+        // Показване на състоянието на играта
+        if (state.phase === 'BIDDING') {
+            const currentHighest = state.highestBid.type ? `${state.highestBid.type}` : 'Няма';
+            document.getElementById('game-info').innerText = `Фаза: НАДДАВАНЕ | Текущ анонс: ${currentHighest}`;
+            document.getElementById('bidding-panel').style.display = (state.currentTurn === socket.id) ? 'block' : 'none';
+        } else {
+            document.getElementById('game-info').innerText = `Фаза: ИГРА | Договор: ${state.gameType}`;
+            document.getElementById('bidding-panel').style.display = 'none';
+        }
+
+        document.getElementById('turn-indicator').innerText = (state.currentTurn === socket.id) ? "ВАШ РЕД Е!" : "Опонентът мисли...";
+
+        // Рендериране на карти
+        const myCardsDiv = document.getElementById('my-cards');
+        myCardsDiv.innerHTML = '';
+        state.hand.forEach((card, index) => {
+            const cardEl = document.createElement('div');
+            cardEl.className = `card ${(card.suit === '♦' || card.suit === '♥') ? 'red' : ''}`;
+            cardEl.innerText = `${card.value}\n${card.suit}`;
+            if (state.phase === 'PLAYING') {
+                cardEl.onclick = () => socket.emit('playCard', index);
+            }
+            myCardsDiv.appendChild(cardEl);
+        });
+
+        document.getElementById('left-count').innerText = `Карти: ${state.hand.length}`;
+        document.getElementById('right-count').innerText = `Карти: ${state.hand.length}`;
+
+        // Карти на масата
+        const tableDiv = document.getElementById('table');
+        tableDiv.innerHTML = '';
+        state.currentTrick.forEach(item => {
+            const cardEl = document.createElement('div');
+            cardEl.className = `card ${(item.card.suit === '♦' || item.card.suit === '♥') ? 'red' : ''}`;
+            cardEl.innerText = `${item.card.value}\n${item.card.suit}`;
+            tableDiv.appendChild(cardEl);
+        });
+    });
+
+    socket.on('errorMsg', (msg) => alert(msg));
+    socket.on('roundOver', () => alert("Кръгът завърши!"));
+    socket.on('gameOver', (data) => alert(`Край на играта! Печели играч ${data.winner}`));
+</script>
+</body>
+</html>
