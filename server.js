@@ -6,7 +6,9 @@ const path = require('path');
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-let players = [];
+let players = []; 
+let playerNames = {}; // Обект, който ще пази: socket.id -> "Гого", "Виктор" или "Моньо"
+
 let gameState = {
     deck: [],
     hands: {},
@@ -39,12 +41,12 @@ function createDeck() {
     return deck;
 }
 
-function shuffle(deck) {
-    for (let i = deck.length - 1; i > 0; i--) {
+function shuffle(array) {
+    for (let i = array.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [deck[i], deck[j]] = [deck[j], deck[i]];
+        [array[i], array[j]] = [array[j], array[i]];
     }
-    return deck;
+    return array;
 }
 
 function getCardPower(card, ledSuit, gameType) {
@@ -141,7 +143,17 @@ function evaluateAnnouncements(hand, gameType) {
             }
         }
     }
-    return { points, text: textList.join(', ') || "Няма" };
+    return { points: points, text: textList.join(', ') || "Няма" };
+}
+
+function assignNamesToPlayers() {
+    let availableNames = ["Гого", "Виктор", "Моньо"];
+    let shuffledNames = shuffle(availableNames); // Разбъркваме имената на случаен принцип
+    
+    players.forEach((id, index) => {
+        playerNames[id] = shuffledNames[index];
+    });
+    console.log("Имената за тази сесия са разпределени:", playerNames);
 }
 
 function startNewRound() {
@@ -210,14 +222,15 @@ function sendGameStateToAll() {
             highestBid: gameState.highestBid,
             dealer: players[gameState.dealerIndex],
             announcementText: gameState.announcements[id].text,
-            announcementPoints: gameState.announcements[id].points
+            announcementPoints: gameState.announcements[id].points,
+            playerNamesMap: playerNames // Изпращаме мапа с имената към браузъра
         });
     });
 }
 
+// КОРЕКЦИЯ: Взема имената Гого, Виктор или Моньо вместо служебния ID низ
 function getPlayerDisplay(id) {
-    const idx = players.indexOf(id);
-    return idx !== -1 ? `Играч ${idx + 1}` : "Неизвестен";
+    return playerNames[id] || "Наблюдател";
 }
 
 function customRoundScores(scoresMap, gameType) {
@@ -226,38 +239,34 @@ function customRoundScores(scoresMap, gameType) {
 
     if (gameType === 'БЕЗ_КОЗ') {
         players.forEach(id => {
-            let doubled = raw[id] * 2;
+            let doubled = (raw[id] || 0) * 2;
             let remainder = doubled % 10;
-            if (remainder >= 5) {
-                rounded[id] = Math.ceil(doubled / 10);
-            } else {
-                rounded[id] = Math.floor(doubled / 10);
-            }
+            rounded[id] = (remainder >= 5) ? Math.ceil(doubled / 10) : Math.floor(doubled / 10);
         });
         return rounded;
     }
 
     if (gameType === 'ВСИЧКО_КОЗ') {
-        let minPlayerId = players.reduce((minId, id) => raw[id] < raw[minId] ? id : minId, players);
+        let minPlayerId = players.reduce((minId, id) => (raw[id] || 0) < (raw[minId] || 0) ? id : minId, players);
         players.forEach(id => {
-            let remainder = raw[id] % 10;
+            let remainder = (raw[id] || 0) % 10;
             let threshold = (id === minPlayerId) ? 4 : 5;
-            rounded[id] = (remainder >= threshold) ? Math.ceil(raw[id] / 10) : Math.floor(raw[id] / 10);
+            rounded[id] = (remainder >= threshold) ? Math.ceil((raw[id] || 0) / 10) : Math.floor((raw[id] || 0) / 10);
         });
         return rounded;
     }
 
     if (['♦', '♠', '♥'].includes(gameType)) {
-        let minPlayerId = players.reduce((minId, id) => raw[id] < raw[minId] ? id : minId, players);
+        let minPlayerId = players.reduce((minId, id) => (raw[id] || 0) < (raw[minId] || 0) ? id : minId, players);
         players.forEach(id => {
-            let remainder = raw[id] % 10;
+            let remainder = (raw[id] || 0) % 10;
             let threshold = (id === minPlayerId) ? 6 : 5;
-            rounded[id] = (remainder >= threshold) ? Math.ceil(raw[id] / 10) : Math.floor(raw[id] / 10);
+            rounded[id] = (remainder >= threshold) ? Math.ceil((raw[id] || 0) / 10) : Math.floor((raw[id] || 0) / 10);
         });
         return rounded;
     }
 
-    players.forEach(id => rounded[id] = Math.round(raw[id] / 10));
+    players.forEach(id => rounded[id] = Math.round((raw[id] || 0) / 10));
     return rounded;
 }
 
@@ -268,16 +277,16 @@ function processEndRound() {
 
     let finalScoresThisRound = {};
     players.forEach(id => {
-        finalScoresThisRound[id] = gameState.roundScores[id] + gameState.announcements[id].points;
+        finalScoresThisRound[id] = (gameState.roundScores[id] || 0) + (gameState.announcements[id].points || 0);
     });
 
     let roundedScores = customRoundScores(finalScoresThisRound, gameState.gameType);
     const announcerId = gameState.announcer;
-    const announcerPoints = roundedScores[announcerId];
+    const announcerPoints = roundedScores[announcerId] || 0;
 
     let isInside = false;
     players.forEach(id => {
-        if (id !== announcerId && roundedScores[id] > announcerPoints) isInside = true;
+        if (id !== announcerId && (roundedScores[id] || 0) > announcerPoints) isInside = true;
     });
 
     let roundLog = {};
@@ -286,14 +295,14 @@ function processEndRound() {
         players.forEach(id => {
             if (id === announcerId) {
                 roundLog[id] = 0;
-            } else {
-                roundLog[id] = roundedScores[id] + bonus;
+	    } else {
+		roundLog[id] = (roundedScores[id] || 0) + bonus;
                 gameState.totalScores[id] += roundLog[id];
             }
         });
     } else {
         players.forEach(id => {
-            roundLog[id] = roundedScores[id];
+            roundLog[id] = roundedScores[id] || 0;
             gameState.totalScores[id] += roundLog[id];
         });
     }
@@ -301,11 +310,13 @@ function processEndRound() {
     let winner = null;
     players.forEach(id => {
         if (gameState.totalScores[id] >= 111) {
-            if (!winner || gameState.totalScores[id] > gameState.totalScores[winner]) winner = id;
+            if (!winner || gameState.totalScores[id] > gameState.totalScores[winner]) {
+                winner = id;
+            }
         }
     });
 
-	 if (winner) {
+    if (winner) {
         io.emit('gameOver', { winner: getPlayerDisplay(winner), scores: gameState.totalScores });
         players.forEach(id => gameState.totalScores[id] = 0);
         gameState.dealerIndex = -1;
@@ -320,13 +331,16 @@ function processEndRound() {
 }
 
 io.on('connection', (socket) => {
-    if (players.length < 3) {
+    if (players.length < 3 && !players.includes(socket.id)) {
         players.push(socket.id);
     } else {
         return socket.disconnect();
     }
 
-    if (players.length === 3) startNewRound();
+    if (players.length === 3) {
+        assignNamesToPlayers(); // Щом се закачат и тримата, раздаваме имената им
+        startNewRound();
+    }
 
     socket.on('submitBid', (bidType) => {
         if (gameState.phase !== 'BIDDING' || players[gameState.currentTurnIndex] !== socket.id) return;
@@ -361,10 +375,10 @@ io.on('connection', (socket) => {
         if (playerIndex !== gameState.currentTurnIndex) return;
 
         const card = gameState.hands[socket.id][cardIndex];
-
+        
         if (gameState.currentTrick.length > 0 && card.value !== '3') {
             const hasLedSuit = gameState.hands[socket.id].some(c => c.suit === gameState.ledSuit);
-
+            
             if (hasLedSuit && card.suit !== gameState.ledSuit) {
                 socket.emit('errorMsg', 'Длъжен сте да отговорите на искания цвят (или пуснете Тройка)!');
                 return;
@@ -378,13 +392,13 @@ io.on('connection', (socket) => {
                 });
 
                 const myPower = getCardPower(card, gameState.ledSuit, gameState.gameType);
-                const hasStrongerCard = gameState.hands[socket.id].some(c =>
-                    c.suit === gameState.ledSuit &&
+                const hasStrongerCard = gameState.hands[socket.id].some(c => 
+                    c.suit === gameState.ledSuit && 
                     getCardPower(c, gameState.ledSuit, gameState.gameType) > highestTrickPower
                 );
 
                 if (hasStrongerCard && myPower <= highestTrickPower) {
-                    socket.emit('errorMsg', 'Трябва да качите над най-силната карта на masaта!');
+                    socket.emit('errorMsg', 'Трябва да качите над най-силната карта на масата!');
                     return;
                 }
             }
@@ -394,11 +408,12 @@ io.on('connection', (socket) => {
 
         gameState.hands[socket.id].splice(cardIndex, 1);
         gameState.currentTrick.push({ playerId: socket.id, card });
+        
         gameState.currentTurnIndex = (gameState.currentTurnIndex + 2) % 3;
 
         if (gameState.currentTrick.length === 3) {
             setTimeout(() => {
-                let winnerCardItem = gameState.currentTrick[0];
+                let winnerCardItem = gameState.currentTrick;
                 let maxPower = getCardPower(winnerCardItem.card, gameState.ledSuit, gameState.gameType);
 
                 for (let i = 1; i < 3; i++) {
@@ -415,14 +430,14 @@ io.on('connection', (socket) => {
                 });
 
                 const trickWinnerId = winnerCardItem.playerId;
-                gameState.roundScores[trickWinnerId] += trickPoints;
+                gameState.roundScores[trickWinnerId] = (gameState.roundScores[trickWinnerId] || 0) + trickPoints;
                 gameState.lastTrickWinner = trickWinnerId;
-
+                
                 gameState.currentTurnIndex = players.indexOf(trickWinnerId);
                 gameState.currentTrick = [];
                 gameState.ledSuit = null;
 
-                const checkPlayerId = players[0];
+                const checkPlayerId = players;
                 if (gameState.hands[checkPlayerId] && gameState.hands[checkPlayerId].length === 0) {
                     processEndRound();
                 } else {
@@ -435,6 +450,7 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         players = players.filter(id => id !== socket.id);
+        delete playerNames[socket.id]; // Премахваме името при напускане
         gameState.phase = 'WAITING';
         gameState.dealerIndex = -1;
     });
