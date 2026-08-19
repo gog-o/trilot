@@ -28,11 +28,17 @@
         #bidding-panel { display: none; background: rgba(0,0,0,0.9); padding: 15px; border-radius: 10px; margin-top: 10px; }
         .bid-btn { padding: 8px 15px; margin: 3px; font-weight: bold; cursor: pointer; background: #fff; border: none; border-radius: 4px; }
         .bid-btn:hover { background: #ffeb3b; }
+
+        #music-control { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.7); border: 1px solid white; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; z-index: 10; }
+        #music-control:hover { background: white; color: black; }
     </style>
 </head>
 <body>
 
-<!-- Екран за въвеждане на име -->
+<audio id="bg-music" src="/audio/background.mp3" loop></audio>
+
+<button id="music-control" onclick="toggleMusic()">🔊 Музика: Изкл.</button>
+
 <div id="login-screen">
     <h2>Добре дошли в Трилот!</h2>
     <p>Въведете вашето име:</p>
@@ -42,7 +48,6 @@
     <div id="waiting-list">Изчакване на играчи...<br>Свързани: 0/3</div>
 </div>
 
-<!-- Игрална маса -->
 <div id="game-layout">
     <div id="scoreboard">
         <div id="scores-text">Сглобяване на играта...</div>
@@ -75,9 +80,14 @@
 <script src="/socket.io/socket.io.js"></script>
 <script>
     const socket = io();
+    const music = document.getElementById('bg-music');
+    music.volume = 0.2; 
 
+    // КОРИГИРАНО: Правилно затваряне на EventListener-а за натискане на клавиш Enter
     document.getElementById('username-input').addEventListener('keypress', function(e) {
-        if (e.key === 'Enter') submitName();
+        if (e.key === 'Enter') {
+            submitName();
+        }
     });
 
     function submitName() {
@@ -86,9 +96,22 @@
         socket.emit('joinGame', name);
         document.getElementById('username-input').disabled = true;
         document.querySelector('.login-btn').disabled = true;
+        
+        music.play().then(() => {
+            document.getElementById('music-control').innerText = "🔊 Музика: Вкл.";
+        }).catch(err => console.log("Браузърът блокира автоматичния старт на звука."));
     }
 
-    // КОРЕКЦИЯ: Правилно показване в реално време на влизащите играчи на екрана за изчакване
+    function toggleMusic() {
+        if (music.paused) {
+            music.play();
+            document.getElementById('music-control').innerText = "🔊 Музика: Вкл.";
+        } else {
+            music.pause();
+            document.getElementById('music-control').innerText = "🔇 Музика: Изкл.";
+        }
+    }
+
     socket.on('waitingStatus', (data) => {
         const nameList = data.names.join(', ');
         document.getElementById('waiting-list').innerHTML = `Свързани играчи: ${data.current}/3<br><span style="color:#00e676;">(${nameList})</span>`;
@@ -102,16 +125,13 @@
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('game-layout').style.display = 'block';
 
-        // КОРЕКЦИЯ: Стриктна кръгова подредба на имената (Ляв и Десен) без дублиране и лепени низове
         if (state.playerNamesMap && state.playerNamesMap[socket.id]) {
             const myName = state.playerNamesMap[socket.id];
             document.getElementById('my-name').innerText = `Вие (${myName})`;
 
-            // Пренареждаме масива с ключове (ID-та), така че текущият играч винаги да е базова отправна точка
             let socketIds = Object.keys(state.playerNamesMap);
             let myIndex = socketIds.indexOf(socket.id);
             
-            // Намираме кой е следващият и по-следващият по часовниковата стрелка на масата
             let leftPlayerId = socketIds[(myIndex + 1) % 3];
             let rightPlayerId = socketIds[(myIndex + 2) % 3];
 
@@ -119,7 +139,7 @@
             document.getElementById('right-name').innerText = state.playerNamesMap[rightPlayerId] || "Десен Опонент";
         }
 
-        let scoreStr = "Общ результат: ";
+        let scoreStr = "Общ резултат: ";
         if (state.playerNamesMap) {
             Object.keys(state.totalScores).forEach(id => {
                 if (state.playerNamesMap[id]) {
@@ -163,13 +183,11 @@
         tableDiv.innerHTML = '';
         state.currentTrick.forEach(item => {
             const cardEl = document.createElement('div');
-            cardEl.className = `card ${(item.card.suit === '♦' || item.card.suit === '♥') ? 'red' : ''}`;
-            cardEl.innerText = `${item.card.value}\n${item.card.suit}`;
-            tableDiv.appendChild(cardEl);
-        });
-    });
-
-    socket.on('errorMsg', (msg) => alert(msg));
+	cardEl.className = card ${(item.card.suit === '♦' || item.card.suit === '♥') ? 'red' : ''};
+	cardEl.innerText = ${item.card.value}\n${item.card.suit};
+	});
+	});
+	socket.on('errorMsg', (msg) => alert(msg));
     socket.on('roundOver', (data) => alert(data.details));
     socket.on('gameOver', (data) => alert(`Край на играта! ${data.winner} спечели мача!`));
 </script>

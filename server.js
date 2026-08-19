@@ -32,8 +32,8 @@ let gameState = {
 const bidValues = { '♦': 1, '♥': 2, '♠': 3, 'БЕЗ_КОЗ': 4, 'ВСИЧКО_КОЗ': 5 };
 const sequenceOrder = ['7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 
-// КОРЕКЦИЯ: Точният ред на силата на триадите съгласно вашите правила
-const triadPowerOrder = ['3', '7', '8', 'Q', 'K', '10', 'A', '9', 'J'];
+// СТРИКТЕН ТУРНИРЕН РЕД НА СИЛАТА (от най-слабото към най-силното: Q е 0, J е 5)
+const triadPowerOrder = ['Q', 'K', '10', 'A', '9', 'J'];
 
 function createDeck() {
     const suits = ['♦', '♥', '♠']; 
@@ -172,10 +172,10 @@ function findIndividualAnnouncements(hand, gameType) {
 function createSequenceObject(cardsArray, suit) {
     let len = cardsArray.length;
     let highestCard = cardsArray[cardsArray.length - 1].value;
-    let pts = 20; let type = "Терц";
+    let pts = 20; let type = "Терца";
     if (len === 4) { pts = 40; type = "Кварта"; }
     else if (len >= 5) { pts = 60; type = "Квинта"; }
-    return { length: len, highestValue: highestCard, highestIndex: sequenceOrder.indexOf(highestCard), points: pts, suit: suit, cards: cardsArray, text: type + " до " + highestCard + " от " + suit + " (" + pts + " т.)" };
+    return { length: len, highestValue: highestCard, highestIndex: sequenceOrder.indexOf(highestCard), points: pts, suit: suit, cards: cardsArray, text: type + " до " + highestCard + " (" + pts + " т.)" };
 }
 
 function compareAndFinalizeAnnouncements() {
@@ -184,6 +184,7 @@ function compareAndFinalizeAnnouncements() {
         allBids[id] = findIndividualAnnouncements(gameState.hands[id], gameState.gameType);
         gameState.announcements[id] = { points: 0, text: "Няма" };
     });
+
     if (gameState.gameType !== 'БЕЗ_КОЗ') {
         let bestSeqPlayer = null; let bestSeq = { length: 0, highestIndex: -1 }; let seqTie = false;
         players.forEach(id => {
@@ -195,20 +196,22 @@ function compareAndFinalizeAnnouncements() {
                 }
             });
         });
+
         if (bestSeqPlayer && !seqTie) {
             let totalPts = allBids[bestSeqPlayer].sequences.reduce((sum, s) => sum + s.points, 0);
             let txt = allBids[bestSeqPlayer].sequences.map(s => s.text).join(', ');
             gameState.announcements[bestSeqPlayer].points += totalPts;
             gameState.announcements[bestSeqPlayer].text = txt;
+            io.emit('errorMsg', getPlayerDisplay(bestSeqPlayer) + " пише анонс: " + txt + "!");
         } else if (seqTie) {
-            players.forEach(id => io.to(id).emit('errorMsg', 'Поредиците отпаднаха поради равни анонси!'));
+            io.emit('errorMsg', 'Анонсите за поредни карти на играчите отпаднаха поради равенство!');
         }
     }
     
-    // КОРЕКЦИЯ: Правилно сравнение на триадите спрямо новата подредба на силата Q,K,10,A,9,J
     let bestTriadPlayer = null; 
     let bestTriadPowerIndex = -1;
     
+    // СТРИКТНО СРАВНЕНИЕ: Проверява коя Триада е най-напред в масива triadPowerOrder
     players.forEach(id => {
         allBids[id].triads.forEach(t => {
             let currentPowerIndex = triadPowerOrder.indexOf(t.value);
@@ -218,12 +221,17 @@ function compareAndFinalizeAnnouncements() {
             }
         });
     });
+
     if (bestTriadPlayer) {
         let totalPts = allBids[bestTriadPlayer].triads.reduce((sum, t) => sum + t.points, 0);
         let txt = allBids[bestTriadPlayer].triads.map(t => t.text).join(', ');
         gameState.announcements[bestTriadPlayer].points += totalPts;
-        if (gameState.announcements[bestTriadPlayer].text === "Няма") { gameState.announcements[bestTriadPlayer].text = txt; } 
-        else { gameState.announcements[bestTriadPlayer].text += " | " + txt; }
+        if (gameState.announcements[bestTriadPlayer].text === "Няма") { 
+            gameState.announcements[bestTriadPlayer].text = txt; 
+        } else { 
+            gameState.announcements[bestTriadPlayer].text += " | " + txt; 
+        }
+        io.emit('errorMsg', getPlayerDisplay(bestTriadPlayer) + " пише анонс: " + txt + "!");
     }
 }
 
@@ -238,10 +246,10 @@ function startNewRound() {
     gameState.belotDeclared = {};
     gameState.totalTricksPlayed = 0;
 
-    if (gameState.dealerIndex === -1) {
-        gameState.dealerIndex = Math.floor(Math.random() * 3);
-    } else {
-        gameState.dealerIndex = (gameState.dealerIndex + 2) % 3;
+if (gameState.dealerIndex === -1) {
+    gameState.dealerIndex = Math.floor(Math.random() * 3);
+} else {
+    gameState.dealerIndex = (gameState.dealerIndex + 2) % 3;
 }
 players.forEach(id => {
     gameState.hands[id] = [];
@@ -257,7 +265,7 @@ let currentDealIndex = (gameState.dealerIndex + 2) % 3;
 for (let k = 0; k < 3; k++) {
     let pId = players[currentDealIndex];
     gameState.hands[pId].push(...gameState.deck.splice(0, 6));
-    sortHand(gameState.hands[pId], 'БЕЗ_КОЗ');
+    sortHand(gameState.hands[pId], '♦');
     currentDealIndex = (currentDealIndex + 2) % 3;
 }
 gameState.currentTurnIndex = (gameState.dealerIndex + 2) % 3;
@@ -393,60 +401,60 @@ function processEndRound() {
     }
 }
 io.on('connection', (socket) => {
-            socket.on('joinGame', (username) => {
-                if (players.length < 3 && !players.includes(socket.id)) {
-                    players.push(socket.id);
-                    playerNames[socket.id] = username || "Играч " + (players.length);
-                    console.log(playerNames[socket.id] + " се присъедини към масата.");
-                    io.emit('waitingStatus', {
-                        current: players.length,
-                        names: Object.values(playerNames)
-                    });
-                    if (players.length === 3) startNewRound();
-                } else {
-                    socket.emit('errorMsg', 'Масата е пълна.');
-                    socket.disconnect();
-                }
+    socket.on('joinGame', (username) => {
+        if (players.length < 3 && !players.includes(socket.id)) {
+            players.push(socket.id);
+            playerNames[socket.id] = username || "Играч " + (players.length);
+            console.log(playerNames[socket.id] + " се присъедини към масата.");
+            io.emit('waitingStatus', {
+                current: players.length,
+                names: Object.values(playerNames)
             });
-            socket.on('submitBid', (bidType) => {
-                if (gameState.phase !== 'BIDDING' || players[gameState.currentTurnIndex] !== socket.id) return;
-                if (bidType === 'ПАС') {
-                    gameState.passCount++;
-                    if (gameState.passCount === 3 && !gameState.highestBid.type) {
-                        startNewRound();
-                        return;
-                    } else if (gameState.passCount === 2 && gameState.highestBid.type) {
-                        finishDealing();
-                        return;
-                    }
-                } else {
-                    const bidVal = bidValues[bidType] || 0;
-                    if (bidVal > gameState.highestBid.value) {
-                        gameState.highestBid = {
-                            type: bidType,
-                            value: bidVal,
-                            playerId: socket.id
-                        };
-                        gameState.passCount = 0;
-                    } else {
-                        socket.emit('errorMsg', 'Трябва да наддадете по-висока игра!');
-                        return;
-                    }
-                }
-                gameState.currentTurnIndex = (gameState.currentTurnIndex + 2) % 3;
-                sendGameStateToAll();
-            });
-            socket.on('playCard', (cardIndex) => {
-                        if (gameState.phase !== 'PLAYING') return;
-                        const playerIndex = players.indexOf(socket.id);
-                        if (playerIndex !== gameState.currentTurnIndex) return;
-                        const card = gameState.hands[socket.id][cardIndex];
-                        if (gameState.currentTrick.length > 0 && card.value !== '3') {
-                            const hasLedSuit = gameState.hands[socket.id].some(c => c.suit === gameState.ledSuit);
-                            if (hasLedSuit && card.suit !== gameState.ledSuit) {
-                                socket.emit('errorMsg', 'Длъжен сте да отговорите на искания цвят (или пуснете Тройка)!');
-                                return;
-                            } // ПРАВИЛО 1: ЗАДЪЛЖИТЕЛНО ЦАКАНЕ С КОЗ (при липса на цвят, но наличност на коз)
+            if (players.length === 3) startNewRound();
+        } else {
+            socket.emit('errorMsg', 'Масата е пълна.');
+            socket.disconnect();
+        }
+    });
+    socket.on('submitBid', (bidType) => {
+        if (gameState.phase !== 'BIDDING' || players[gameState.currentTurnIndex] !== socket.id) return;
+        if (bidType === 'ПАС') {
+            gameState.passCount++;
+            if (gameState.passCount === 3 && !gameState.highestBid.type) {
+                startNewRound();
+                return;
+            } else if (gameState.passCount === 2 && gameState.highestBid.type) {
+                finishDealing();
+                return;
+            }
+        } else {
+            const bidVal = bidValues[bidType] || 0;
+            if (bidVal > gameState.highestBid.value) {
+                gameState.highestBid = {
+                    type: bidType,
+                    value: bidVal,
+                    playerId: socket.id
+                };
+                gameState.passCount = 0;
+            } else {
+                socket.emit('errorMsg', 'Трябва да наддадете по-висока игра!');
+                return;
+            }
+        }
+        gameState.currentTurnIndex = (gameState.currentTurnIndex + 2) % 3;
+        sendGameStateToAll();
+    });
+    socket.on('playCard', (cardIndex) => {
+        if (gameState.phase !== 'PLAYING') return;
+        const playerIndex = players.indexOf(socket.id);
+        if (playerIndex !== gameState.currentTurnIndex) return;
+        const card = gameState.hands[socket.id][cardIndex];
+        if (gameState.currentTrick.length > 0 && card.value !== '3') {
+            const hasLedSuit = gameState.hands[socket.id].some(c => c.suit === gameState.ledSuit);
+            if (hasLedSuit && card.suit !== gameState.ledSuit) {
+                socket.emit('errorMsg', 'Длъжен сте да отговорите на искания цвят (или пуснете Тройка)!');
+                return;
+            }
             if (!hasLedSuit) {
                 const trumpSuit = (gameState.gameType === 'ВСИЧКО_КОЗ') ? gameState.ledSuit : gameState.gameType;
                 const isTrumpMode = (gameState.gameType === 'ВСИЧКО_КОЗ' || ['♦', '♥', '♠'].includes(gameState.gameType));
@@ -472,15 +480,20 @@ io.on('connection', (socket) => {
                 }
             }
         }
-        if (gameState.gameType !== 'БЕЗ_КОЗ' && !gameState.belotDeclared[socket.id]) {
+         if (gameState.gameType !== 'БЕЗ_КОЗ') {
             const isTrumpCard = (gameState.gameType === 'ВСИЧКО_КОЗ' || card.suit === gameState.gameType);
             if (isTrumpCard && (card.value === 'Q' || card.value === 'K')) {
                 const partnerValue = (card.value === 'Q') ? 'K' : 'Q';
                 const hasPartner = gameState.hands[socket.id].some(c => c.value === partnerValue && c.suit === card.suit);
-                if (hasPartner) {
+                
+                // Създаваме уникален ключ за тази конкретна боя (напр. "Гого-♥" или "Виктор-♦")
+                const belotKey = socket.id + '-' + card.suit;
+                
+                // Зачитаме белота, само ако играчът НЕ е обявявал белот ТОЧНО в тази боя в текущия кръг
+                if (hasPartner && !gameState.belotDeclared[belotKey]) {
                     gameState.roundScores[socket.id] += 20;
-                    gameState.belotDeclared[socket.id] = true;
-                    io.emit('errorMsg', getPlayerDisplay(socket.id) + " обяви БЕЛОТ (+20 т.)!");
+                    gameState.belotDeclared[belotKey] = true; // Маркираме само тази боя като обявена
+                    io.emit('errorMsg', getPlayerDisplay(socket.id) + " обяви БЕЛОТ на " + card.suit + " (+20 т.)!");
                 }
             }
         }
@@ -490,7 +503,7 @@ io.on('connection', (socket) => {
             playerId: socket.id,
             card
         });
-        gameState.currentTurnIndex = (gameState.currentTurnIndex + 2) % 3; // ПРАВИЛНО И СИГУРНО ПРИБИРАНЕ НА КАРТИТЕ
+        gameState.currentTurnIndex = (gameState.currentTurnIndex + 2) % 3;
         if (gameState.currentTrick.length === 3) {
             gameState.totalTricksPlayed++;
             setTimeout(() => {
