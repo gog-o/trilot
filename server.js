@@ -270,6 +270,13 @@ function compareAndFinalizeAnnouncements() {
     }
 }
 
+function assignNamesToPlayers() {
+    let availableNames = ["Гого", "Виктор", "Моньо"];
+    let shuffledNames = shuffle([...availableNames]);
+    players.forEach((id, index) => {
+        playerNames[id] = shuffledNames[index];
+    });
+}
 
 function startNewRound() {
     gameState.deck = shuffle(createDeck());
