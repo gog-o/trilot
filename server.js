@@ -1,3 +1,250 @@
+const express = require('express');
+const app = express();
+const http = require('http').createServer(app);
+const io = require('socket.io')(http);
+const path = require('path');
+
+app.use(express.static(path.join(__dirname, 'public')));
+
+let players = []; 
+let playerNames = {}; 
+
+let gameState = {
+    deck: [],
+    hands: {},
+    roundScores: {},
+    announcements: {}, 
+    totalScores: {},
+    announcer: null,
+    gameType: null,
+    currentTrick: [],
+    currentTurnIndex: 0,
+    dealerIndex: -1,
+    ledSuit: null,
+    phase: 'WAITING',
+    highestBid: { type: null, value: 0, playerId: null },
+    passCount: 0,
+    lastTrickWinner: null,
+    belotDeclared: {},
+    totalTricksPlayed: 0 
+};
+
+const bidValues = { '♦': 1, '♥': 2, '♠': 3, 'БЕЗ_КОЗ': 4, 'ВСИЧКО_КОЗ': 5 };
+const sequenceOrder = ['7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+
+function createDeck() {
+    const suits = ['♦', '♥', '♠']; 
+    const values = ['3', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+    let deck = [];
+    for (let suit of suits) {
+        for (let value of values) {
+            deck.push({ value, suit });
+        }
+    }
+    return deck;
+}
+
+function shuffle(array) {
+    for (let i = array.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [array[i], array[j]] = [array[j], array[i]];
+    }
+    return array;
+}
+
+function getCardPower(card, ledSuit, gameType) {
+    const value = card.value;
+    if (value === '3') return (card.suit === ledSuit) ? 1 : 0;
+
+    const isSingleSuitTrump = ['♦', '♥', '♠'].includes(gameType);
+    if (isSingleSuitTrump && card.suit === gameType && ledSuit !== gameType) {
+        const trumpPowerMap = { '7': 20, '8': 21, 'Q': 22, 'K': 23, '10': 24, 'A': 25, '9': 26, 'J': 27 };
+        return trumpPowerMap[value] || 0;
+    }
+
+    if (card.suit !== ledSuit && (!isSingleSuitTrump || card.suit !== gameType)) {
+        return 0;
+    }
+
+    if (gameType === 'ВСИЧКО_КОЗ' || (isSingleSuitTrump && card.suit === gameType)) {
+        const powerMap = { '7': 2, '8': 3, 'Q': 4, 'K': 5, '10': 6, 'A': 7, '9': 8, 'J': 9 };
+        return powerMap[value] || 0;
+    } 
+    
+    const powerMap = { '7': 2, '8': 3, '9': 4, 'J': 5, 'Q': 6, 'K': 7, '10': 8, 'A': 9 };
+    return powerMap[value] || 0;
+}
+
+function getStandardCardPoints(card, gameType, ledSuit) {
+    const value = card.value;
+    
+    if (value === '3') {
+        if (gameType === 'БЕЗ_КОЗ') return 0;
+        if (gameType === 'ВСИЧКО_КОЗ') return (card.suit === ledSuit) ? 3 : 9;
+        return 3; 
+    }
+
+    if (gameType === 'ВСИЧКО_КОЗ') {
+        const points = { '7': 0, '8': 0, '9': 14, 'J': 20, 'Q': 3, 'K': 4, '10': 10, 'A': 11 };
+        return points[value] || 0;
+    }
+
+    if (['♦', '♥', '♠'].includes(gameType)) {
+        if (card.suit === gameType) {
+            const points = { '7': 0, '8': 0, '9': 14, 'J': 20, 'Q': 3, 'K': 4, '10': 10, 'A': 11 };
+            return points[value] || 0;
+        } else {
+            const points = { '7': 1, '8': 1, '9': 1, 'J': 2, 'Q': 3, 'K': 4, '10': 10, 'A': 11 };
+            return points[value] || 0;
+        }
+    }
+
+    if (gameType === 'БЕЗ_КОЗ') {
+        const points = { '7': 1, '8': 1, '9': 1, 'J': 2, 'Q': 3, 'K': 4, '10': 10, 'A': 11 };
+        return points[value] || 0;
+    }
+
+    return 0;
+}
+
+function sortHand(hand, gameType) {
+    const suitOrder = { '♦': 1, '♥': 2, '♠': 3 }; 
+    return hand.sort((a, b) => {
+        if (a.suit !== b.suit) return suitOrder[a.suit] - suitOrder[b.suit];
+        return getCardPower(a, a.suit, gameType) - getCardPower(b, b.suit, gameType);
+    });
+}
+
+function findIndividualAnnouncements(hand, gameType) {
+    let triads = [];
+    let sequences = [];
+
+    let valueGroups = {};
+    hand.forEach(c => valueGroups[c.value] = (valueGroups[c.value] || []).concat(c));
+    for (let val in valueGroups) {
+        if (valueGroups[val].length === 3) {
+            if (val === '3') {
+                if (gameType === 'БЕЗ_КОЗ') {
+                    triads.push({ value: val, points: 33, cards: valueGroups[val], text: "Трилот от 3ки (33 т.)" });
+                }
+            } else if (gameType !== 'БЕЗ_КОЗ') { 
+                let pts = 40;
+                if (val === '9') pts = 50;
+                else if (val === 'J') pts = 60;
+                triads.push({ value: val, points: pts, cards: valueGroups[val], text: "Триада от " + val + " (" + pts + " т.)" });
+            }
+        }
+    }
+
+    if (gameType === 'БЕЗ_КОЗ') {
+        return { sequences: [], triads: triads };
+    }
+
+    let suitGroups = { '♦': [], '♥': [], '♠': [] };
+    hand.forEach(c => {
+        if (sequenceOrder.includes(c.value)) {
+            suitGroups[c.suit].push(c);
+        }
+    });
+
+    for (let suit in suitGroups) {
+        let sortedCards = suitGroups[suit].sort((a, b) => sequenceOrder.indexOf(a.value) - sequenceOrder.indexOf(b.value));
+        let currentSeq = [];
+        
+        for (let i = 0; i < sortedCards.length; i++) {
+            if (currentSeq.length === 0) {
+                currentSeq.push(sortedCards[i]);
+            } else {
+                let prevIdx = sequenceOrder.indexOf(currentSeq[currentSeq.length - 1].value);
+                let currIdx = sequenceOrder.indexOf(sortedCards[i].value);
+                if (currIdx === prevIdx + 1) {
+                    currentSeq.push(sortedCards[i]);
+                } else if (currIdx !== prevIdx) {
+                    if (currentSeq.length >= 3) sequences.push(createSequenceObject(currentSeq, suit));
+                    currentSeq = [sortedCards[i]];
+                }
+            }
+        }
+        if (currentSeq.length >= 3) sequences.push(createSequenceObject(currentSeq, suit));
+    }
+
+    let filteredTriads = [];
+    let filteredSequences = [];
+
+    sequences.forEach(seq => {
+        let overlap = triads.find(t => t.cards.some(tc => seq.cards.some(sc => sc.value === tc.value && sc.suit === tc.suit)));
+        if (overlap) {
+            if (seq.points >= overlap.points) {
+                if (!filteredSequences.includes(seq)) filteredSequences.push(seq);
+            } else {
+                if (!filteredTriads.includes(overlap)) filteredTriads.push(overlap);
+            }
+        } else {
+            filteredSequences.push(seq);
+        }
+    });
+
+    triads.forEach(t => {
+        let overlap = sequences.some(seq => seq.cards.some(sc => t.cards.some(tc => sc.value === tc.value && sc.suit === tc.suit)));
+        if (!overlap && !filteredTriads.includes(t)) filteredTriads.push(t);
+    });
+
+    return { sequences: filteredSequences, triads: filteredTriads };
+}
+
+function createSequenceObject(cardsArray, suit) {
+    let len = cardsArray.length;
+    let highestCard = cardsArray[cardsArray.length - 1].value;
+    let pts = 20; 
+    let type = "Терц";
+    if (len === 4) { pts = 40; type = "Кварта"; }
+    else if (len >= 5) { pts = 60; type = "Квинта"; }
+    return {
+        length: len,
+        highestValue: highestCard,
+        highestIndex: sequenceOrder.indexOf(highestCard),
+        points: pts,
+        suit: suit,
+        cards: cardsArray,
+        text: type + " до " + highestCard + " от " + suit + " (" + pts + " т.)"
+    };
+}
+
+function compareAndFinalizeAnnouncements() {
+    let allBids = {};
+    players.forEach(id => {
+        allBids[id] = findIndividualAnnouncements(gameState.hands[id], gameState.gameType);
+        gameState.announcements[id] = { points: 0, text: "Няма" };
+    });
+
+    if (gameState.gameType !== 'БЕЗ_КОЗ') {
+        let bestSeqPlayer = null;
+        let bestSeq = { length: 0, highestIndex: -1 };
+        let seqTie = false;
+
+        players.forEach(id => {
+            allBids[id].sequences.forEach(seq => {
+                if (seq.length > bestSeq.length) {
+                    bestSeq = seq; bestSeqPlayer = id; seqTie = false;
+                } else if (seq.length === bestSeq.length) {
+                    if (seq.highestIndex > bestSeq.highestIndex) {
+                        bestSeq = seq; bestSeqPlayer = id; seqTie = false;
+                    } else if (seq.highestIndex === bestSeq.highestIndex) {
+                        seqTie = true; 
+                    }
+                }
+            });
+        });
+
+        if (bestSeqPlayer && !seqTie) {
+            let totalPts = allBids[bestSeqPlayer].sequences.reduce((sum, s) => sum + s.points, 0);
+            let txt = allBids[bestSeqPlayer].sequences.map(s => s.text).join(', ');
+            gameState.announcements[bestSeqPlayer].points += totalPts;
+            gameState.announcements[bestSeqPlayer].text = txt;
+        } else if (seqTie) {
+            players.forEach(id => io.to(id).emit('errorMsg', 'Поредиците отпаднаха поради равни анонси!'));
+        }
+    }
 
     let bestTriadPlayer = null;
     let bestTriadPoints = -1;
@@ -36,12 +283,8 @@ function startNewRound() {
     gameState.currentTrick = [];
     gameState.ledSuit = null;
     gameState.phase = 'BIDDING';
-gameState.highestBid = {
-    type: null,
-    value: 0,
-    playerId: null
-};
-gameState.passCount = 0;
+    gameState.highestBid = { type: null, value: 0, playerId: null };
+    gameState.passCount = 0;
 gameState.lastTrickWinner = null;
 gameState.belotDeclared = {};
 gameState.totalTricksPlayed = 0;
@@ -287,7 +530,7 @@ io.on('connection', (socket) => {
         if (gameState.currentTrick.length === 3) {
             gameState.totalTricksPlayed++;
             setTimeout(() => {
-                let winnerCardItem = gameState.currentTrick[0]; // ТОЧНАТА КОРЕКЦИЯ: Сочи към първия елемент
+                let winnerCardItem = gameState.currentTrick[0];
                 let maxPower = getCardPower(winnerCardItem.card, gameState.ledSuit, gameState.gameType);
                 for (let i = 1; i < 3; i++) {
                     let currentPower = getCardPower(gameState.currentTrick[i].card, gameState.ledSuit, gameState.gameType);
