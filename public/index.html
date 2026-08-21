@@ -2,14 +2,21 @@
 <html lang="bg">
 <head>
     <meta charset="UTF-8">
-    <title>Трилот - Игра за Трима</title>
+    <title>Трилот - мъка и отчаяние</title>
     <style>
         body { background-color: #1b5e20; color: white; font-family: Arial, sans-serif; margin: 0; overflow: hidden; }
-        #game-layout { position: relative; width: 100vw; height: 100vh; }
+        #game-layout { position: relative; width: 100vw; height: 100vh; display: none; }
+        
+        #login-screen { position: absolute; top:50%; left:50%; transform:translate(-50%, -50%); background: rgba(0,0,0,0.85); padding: 30px; border-radius: 10px; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.5); width: 350px; z-index: 100; }
+        .login-input { padding: 10px; width: 80%; font-size: 16px; margin-bottom: 15px; border-radius: 4px; border: none; text-align: center; }
+        .login-btn { padding: 10px 25px; font-size: 16px; font-weight: bold; background: #00e676; border: none; border-radius: 4px; cursor: pointer; color: black; }
+        .login-btn:hover { background: #ffeb3b; }
+        #waiting-list { margin-top: 15px; color: #ffeb3b; font-size: 14px; font-weight: bold; line-height: 1.5; }
+
         .player-zone { position: absolute; padding: 10px; background: rgba(0,0,0,0.4); border-radius: 8px; text-align: center; min-width: 150px; }
         #my-zone { bottom: 20px; left: 50%; transform: translateX(-50%); }
-        #left-zone { top: 80px; left: 40px; }
-        #right-zone { top: 80px; right: 40px; }
+        #left-zone { top: 20px; left: 20px; }
+        #right-zone { top: 20px; right: 20px; }
         .cards-container { display: flex; gap: 8px; margin-top: 8px; }
         .card { width: 70px; height: 100px; background: white; color: black; border-radius: 6px; display: flex; flex-direction: column; justify-content: center; align-items: center; font-size: 20px; font-weight: bold; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); user-select: none; }
         .card.red { color: red; }
@@ -21,23 +28,30 @@
         #bidding-panel { display: none; background: rgba(0,0,0,0.9); padding: 15px; border-radius: 10px; margin-top: 10px; }
         .bid-btn { padding: 8px 15px; margin: 3px; font-weight: bold; cursor: pointer; background: #fff; border: none; border-radius: 4px; }
         .bid-btn:hover { background: #ffeb3b; }
-        
-        /* Бутон за Музика */
-        #music-control { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.6); border: 1px solid white; color: white; padding: 10px 15px; border-radius: 5px; cursor: pointer; font-weight: bold; z-index: 100; }
+
+        #music-control { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.7); border: 1px solid white; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; z-index: 10; }
         #music-control:hover { background: white; color: black; }
     </style>
 </head>
 <body>
 
-<!-- Аудио Елементи -->
-<audio id="bg-music" src="/sound/background.mp3" loop></audio>
+<audio id="bg-music" src="/audio/background.mp3" loop></audio>
 
-<button id="music-control" onclick="toggleMusic()">🎵 Пусни Музика</button>
+<button id="music-control" onclick="toggleMusic()">🔊 Музика: Изкл.</button>
+
+<div id="login-screen">
+    <h2>Добре дошли в Трилот!</h2>
+    <p>Въведете вашето име:</p>
+    <input type="text" id="username-input" class="login-input" placeholder="Вашето име..." maxlength="12">
+    <br>
+    <button class="login-btn" onclick="submitName()">Влез в играта</button>
+    <div id="waiting-list">Изчакване на играчи...<br>Свързани: 0/3</div>
+</div>
 
 <div id="game-layout">
     <div id="scoreboard">
-        <div id="scores-text">Свързване със сървъра...</div>
-        <div id="game-info">Въведете името си в изскачащия прозорец</div>
+        <div id="scores-text">Сглобяване на играта...</div>
+        <div id="game-info">Фаза: Изчакване</div>
         <div id="an-indicator">Вашите анонси: Няма</div>
         <div id="turn-indicator"></div>
         
@@ -54,8 +68,8 @@
 
     <div id="table"></div>
 
-    <div id="left-zone" class="player-zone"><div id="left-name">Ляв Опонент</div><div id="left-count">Карти: 0</div></div>
-    <div id="right-zone" class="player-zone"><div id="right-name">Десен Опонент</div><div id="right-count">Карти: 0</div></div>
+    <div id="left-zone" class="player-zone"><div id="left-name">Ляв Опонент</div><div id="left-count">Карти: 6</div></div>
+    <div id="right-zone" class="player-zone"><div id="right-name">Десен Опонент</div><div id="right-count">Карти: 6</div></div>
 
     <div id="my-zone" class="player-zone">
         <div id="my-name">Вие</div>
@@ -66,68 +80,76 @@
 <script src="/socket.io/socket.io.js"></script>
 <script>
     const socket = io();
+    const music = document.getElementById('bg-music');
+    music.volume = 0.2; 
 
-    const bgMusic = document.getElementById('background');
+    document.getElementById('username-input').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            submitName();
+        }
+    });
 
-    // Функция за пускане и спиране на фоновата музика
+    function submitName() {
+        const name = document.getElementById('username-input').value.trim();
+        if (!name) return alert("Моля, въведете валидно име!");
+        socket.emit('joinGame', name);
+        document.getElementById('username-input').disabled = true;
+        document.querySelector('.login-btn').disabled = true;
+        
+        music.play().then(() => {
+            document.getElementById('music-control').innerText = "🔊 Музика: Вкл.";
+        }).catch(err => console.log("Браузърът блокира звука."));
+    }
+
     function toggleMusic() {
-        if (bgMusic.paused) {
-            bgMusic.play().catch(err => console.log("Браузърът блокира автоматичното аудио:", err));
-            document.getElementById('music-control').innerText = "⏸ Спри Музика";
+        if (music.paused) {
+            music.play();
+            document.getElementById('music-control').innerText = "🔊 Музика: Вкл.";
         } else {
-            bgMusic.pause();
-            document.getElementById('music-control').innerText = "🎵 Пусни Музика";
+            music.pause();
+            document.getElementById('music-control').innerText = "🔇 Музика: Изкл.";
         }
     }
 
-    const myCustomName = prompt("Въведете вашето име за играта Трилот:") || "Играч";
-    socket.emit('joinGame', myCustomName);
-
-    // Автоматично пускане на музиката веднага щом потребителят кликне за първи път (изискване на браузърите)
-    window.addEventListener('click', () => {
-        if (bgMusic.paused && document.getElementById('music-control').innerText === "🎵 Пусни Музика") {
-            // Оставяме бутона да я контролира, за да не стряскаме играча
-        }
-    }, { once: true });
+    socket.on('waitingStatus', (data) => {
+        const nameList = data.names.join(', ');
+        document.getElementById('waiting-list').innerHTML = `Свързани играчи: ${data.current}/3<br><span style="color:#00e676;">(${nameList})</span>`;
+    });
 
     function sendBid(type) {
         socket.emit('submitBid', type);
     }
 
-        window.lastTrickLength = state.currentTrick.length;
+    socket.on('gameState', (state) => {
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('game-layout').style.display = 'block';
 
+        // КОРИГИРАНО: Стриктно кръгово разпределение на имената БЕЗ лепене със запетаи
         if (state.playerNamesMap && state.playerNamesMap[socket.id]) {
             const myName = state.playerNamesMap[socket.id];
             document.getElementById('my-name').innerText = `Вие (${myName})`;
 
-            let otherNames = [];
-            Object.keys(state.playerNamesMap).forEach(id => {
-                if (id !== socket.id && state.playerNamesMap[id]) {
-                    otherNames.push(state.playerNamesMap[id]);
-                }
-            });
+            let socketIds = Object.keys(state.playerNamesMap);
+            let myIndex = socketIds.indexOf(socket.id);
             
-            if (otherNames) document.getElementById('left-name').innerText = otherNames;
-            if (otherNames) document.getElementById('right-name').innerText = otherNames;
+            // Намиране на следващия и по-следващия играч на масата по часовниковата стрелка
+            let leftPlayerId = socketIds[(myIndex + 1) % 3];
+            let rightPlayerId = socketIds[(myIndex + 2) % 3];
+
+            document.getElementById('left-name').innerText = state.playerNamesMap[leftPlayerId] || "Изчакващ...";
+            document.getElementById('right-name').innerText = state.playerNamesMap[rightPlayerId] || "Изчакващ...";
         }
 
         let scoreStr = "Общ резултат: ";
         if (state.playerNamesMap) {
-            let activePlayersCount = 0;
             Object.keys(state.totalScores).forEach(id => {
                 if (state.playerNamesMap[id]) {
                     const name = state.playerNamesMap[id];
                     scoreStr += `${name}: ${state.totalScores[id]} т. | `;
-                    activePlayersCount++;
                 }
             });
-            
-            if (activePlayersCount < 3) {
-                document.getElementById('scores-text').innerText = `Чакане на играчи... (${activePlayersCount}/3 въвели име)`;
-            } else {
-                document.getElementById('scores-text').innerText = scoreStr;
-            }
         }
+        document.getElementById('scores-text').innerText = scoreStr;
 
         if (state.phase === 'BIDDING') {
             const currentHighest = state.highestBid.type ? `${state.highestBid.type}` : 'Няма';
@@ -137,7 +159,7 @@
         } else {
             document.getElementById('game-info').innerText = `Фаза: ИГРА | Договор: ${state.gameType}`;
             document.getElementById('bidding-panel').style.display = 'none';
-            document.getElementById('an-indicator').innerText = `Вашите анонси in играта: ${state.announcementText} (+${state.announcementPoints} т.)`;
+            document.getElementById('an-indicator').innerText = `Вашите анонси в играта: ${state.announcementText} (+${state.announcementPoints} т.)`;
         }
 
         if (state.playerNamesMap && state.playerNamesMap[state.currentTurn]) {
@@ -151,9 +173,7 @@
             const cardEl = document.createElement('div');
             cardEl.className = `card ${(card.suit === '♦' || card.suit === '♥') ? 'red' : ''}`;
             cardEl.innerText = `${card.value}\n${card.suit}`;
-            if (state.phase === 'PLAYING') {
-                cardEl.onclick = () => socket.emit('playCard', index);
-            }
+            if (state.phase === 'PLAYING') cardEl.onclick = () => socket.emit('playCard', index);
             myCardsDiv.appendChild(cardEl);
         });
 
@@ -162,7 +182,7 @@
 
         const tableDiv = document.getElementById('table');
         tableDiv.innerHTML = '';
-        state.currentTrick.forEach(item => {
+	state.currentTrick.forEach(item => {
             const cardEl = document.createElement('div');
             cardEl.className = `card ${(item.card.suit === '♦' || item.card.suit === '♥') ? 'red' : ''}`;
             cardEl.innerText = `${item.card.value}\n${item.card.suit}`;
