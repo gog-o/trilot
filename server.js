@@ -25,12 +25,14 @@ let gameState = {
     highestBid: { type: null, value: 0, playerId: null },
     passCount: 0,
     lastTrickWinner: null,
-    belotDeclared: {},
+    belotDeclared: {}, 
     totalTricksPlayed: 0,
-    lastCardPlayedTime: 0 
+    lastCardPlayedTime: 0,
+    globalAnnouncementsText: "" 
 };
 
 const bidValues = { '♦': 1, '♥': 2, '♠': 3, 'БЕЗ_КОЗ': 4, 'ВСИЧКО_КОЗ': 5 };
+// Турнирната подредба за последователност на анонсите
 const sequenceOrder = ['7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 
 function createDeck() {
@@ -53,39 +55,32 @@ function shuffle(array) {
     return array;
 }
 
-// КОРЕГИРАНА СИЛА: Тройката коз вече реално цака и взима ръката!
 function getCardPower(card, ledSuit, gameType) {
     const value = card.value;
     const isSingleSuitTrump = ['♦', '♥', '♠'].includes(gameType);
 
-    // 1. Ако се играе на Боя и играч пусне Тройка от КOЗОВИЯ цвят (Цакане)
     if (isSingleSuitTrump && card.suit === gameType && ledSuit !== gameType) {
-        return 10; // Тройката коз получава сила 10, което бие абсолютно всяка нормална боя (макс нормална сила е 9)
+        return 10; 
     }
 
-    // 2. Стандартна Тройка в цвета на ръката (Без цакане)
     if (value === '3') {
         return (card.suit === ledSuit) ? 1 : 0;
     }
 
-    // 3. Цакане с нормален коз (7-Вале) върху обикновена боя
     if (isSingleSuitTrump && card.suit === gameType && ledSuit !== gameType) {
         const trumpPowerMap = { '7': 20, '8': 21, 'Q': 22, 'K': 23, '10': 24, 'A': 25, '9': 26, 'J': 27 };
         return trumpPowerMap[value] || 0;
     }
 
-    // Изчистване на карти от чужд цвят (грешна боя)
     if (card.suit !== ledSuit && (!isSingleSuitTrump || card.suit !== gameType)) {
         return 0;
     }
 
-    // Сила при Козов режим (Всичко коз или съвпадаща козова боя)
     if (gameType === 'ВСИЧКО_КОЗ' || (isSingleSuitTrump && card.suit === gameType)) {
         const powerMap = { '7': 2, '8': 3, 'Q': 4, 'K': 5, '10': 6, 'A': 7, '9': 8, 'J': 9 };
         return powerMap[value] || 0;
     } 
     
-    // Сила при Без Коз / Некозов цвят
     const powerMap = { '7': 2, '8': 3, '9': 4, 'J': 5, 'Q': 6, 'K': 7, '10': 8, 'A': 9 };
     return powerMap[value] || 0;
 }
@@ -130,6 +125,7 @@ function sortHand(hand, gameType) {
     });
 }
 
+// КОРЕГИРАН АЛГОРИТЪМ: Изчислява последователностите СТРИКТНО по хронологичен ред на силата
 function findIndividualAnnouncements(hand, gameType) {
     let triads = [];
     let sequences = [];
@@ -163,6 +159,7 @@ function findIndividualAnnouncements(hand, gameType) {
     });
 
     for (let suit in suitGroups) {
+        // ФУНДАМЕНТАЛНА КОРЕКЦИЯ: Винаги сортираме по хронологичен ред на sequenceOrder, а не по игрова козова сила!
         let sortedCards = suitGroups[suit].sort((a, b) => sequenceOrder.indexOf(a.value) - sequenceOrder.indexOf(b.value));
         let currentSeq = [];
         
@@ -211,7 +208,7 @@ function createSequenceObject(cardsArray, suit) {
     let len = cardsArray.length;
     let highestCard = cardsArray[cardsArray.length - 1].value;
     let pts = 20; 
-    let type = "Терц";
+    let type = "Терца";
     if (len === 4) { pts = 40; type = "Кварта"; }
     else if (len >= 5) { pts = 60; type = "Квинта"; }
     return {
@@ -221,12 +218,14 @@ function createSequenceObject(cardsArray, suit) {
         points: pts,
         suit: suit,
         cards: cardsArray,
-        text: type + " до " + highestCard + " от " + suit + " (" + pts + " т.)"
+        text: type + " до " + highestCard + " (" + pts + " т.)"
     };
 }
 
 function compareAndFinalizeAnnouncements() {
     let allBids = {};
+    let announcementSummary = []; 
+
     players.forEach(id => {
         allBids[id] = findIndividualAnnouncements(gameState.hands[id], gameState.gameType);
         gameState.announcements[id] = { points: 0, text: "Няма" };
@@ -256,8 +255,9 @@ function compareAndFinalizeAnnouncements() {
             let txt = allBids[bestSeqPlayer].sequences.map(s => s.text).join(', ');
             gameState.announcements[bestSeqPlayer].points += totalPts;
             gameState.announcements[bestSeqPlayer].text = txt;
+            announcementSummary.push(getPlayerDisplay(bestSeqPlayer) + ": " + txt);
         } else if (seqTie) {
-            players.forEach(id => io.to(id).emit('errorMsg', 'Поредиците отпаднаха поради равни анонси!'));
+            announcementSummary.push("Поредиците отпаднаха (равни)!");
         }
     }
 
@@ -277,12 +277,26 @@ function compareAndFinalizeAnnouncements() {
         let totalPts = allBids[bestTriadPlayer].triads.reduce((sum, t) => sum + t.points, 0);
         let txt = allBids[bestTriadPlayer].triads.map(t => t.text).join(', ');
         gameState.announcements[bestTriadPlayer].points += totalPts;
-	 if (gameState.announcements[bestTriadPlayer].text === "Няма") {
-		gameState.announcements[bestTriadPlayer].text = txt;
-		} else {
-			gameState.announcements[bestTriadPlayer].text += " | " + txt;
+        if (gameState.announcements[bestTriadPlayer].text === "Няма") {
+            gameState.announcements[bestTriadPlayer].text = txt;
+        } else {
+            gameState.announcements[bestTriadPlayer].text += " | " + txt;
 		}
-	}
+	announcementSummary.push(getPlayerDisplay(bestTriadPlayer) + ": " + txt);
+}
+if (announcementSummary.length > 0) {
+    gameState.globalAnnouncementsText = "Зачетени анонси -> " + announcementSummary.join(' | ');
+} else {
+    gameState.globalAnnouncementsText = "Няма зачетени анонси в това раздаване.";
+}
+}
+
+function assignNamesToPlayers() {
+    let availableNames = ["Гого", "Виктор", "Моньо"];
+    let shuffledNames = shuffle([...availableNames]);
+    players.forEach((id, index) => {
+        playerNames[id] = shuffledNames[index];
+    });
 }
 
 function startNewRound() {
@@ -300,6 +314,7 @@ function startNewRound() {
     gameState.belotDeclared = {};
     gameState.totalTricksPlayed = 0;
     gameState.lastCardPlayedTime = 0;
+    gameState.globalAnnouncementsText = "";
     if (gameState.dealerIndex === -1) {
         gameState.dealerIndex = Math.floor(Math.random() * 3);
     } else {
@@ -357,7 +372,8 @@ function sendGameStateToAll() {
             dealer: players[gameState.dealerIndex],
             announcementText: gameState.announcements[id] ? gameState.announcements[id].text : "Няма",
             announcementPoints: gameState.announcements[id] ? gameState.announcements[id].points : 0,
-            playerNamesMap: playerNames
+            playerNamesMap: playerNames,
+            globalAnnouncementsText: gameState.globalAnnouncementsText
         });
     });
 }
@@ -550,7 +566,7 @@ io.on('connection', (socket) => {
         if (gameState.currentTrick.length === 3) {
             gameState.totalTricksPlayed++;
             setTimeout(() => {
-                let winnerCardItem = gameState.currentTrick[0]; // КОРЕКЦИЯ: winnerCardItem сочи точно към първата хвърлена карта за старт на сравнението!
+                let winnerCardItem = gameState.currentTrick[0];
                 let maxPower = getCardPower(winnerCardItem.card, gameState.ledSuit, gameState.gameType);
                 for (let i = 1; i < 3; i++) {
                     let currentPower = getCardPower(gameState.currentTrick[i].card, gameState.ledSuit, gameState.gameType);
