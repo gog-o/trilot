@@ -26,7 +26,8 @@ let gameState = {
     passCount: 0,
     lastTrickWinner: null,
     belotDeclared: {},
-    totalTricksPlayed: 0 
+    totalTricksPlayed: 0,
+    lastCardPlayedTime: 0 
 };
 
 const bidValues = { '♦': 1, '♥': 2, '♠': 3, 'БЕЗ_КОЗ': 4, 'ВСИЧКО_КОЗ': 5 };
@@ -52,25 +53,39 @@ function shuffle(array) {
     return array;
 }
 
+// КОРЕГИРАНА СИЛА: Тройката коз вече реално цака и взима ръката!
 function getCardPower(card, ledSuit, gameType) {
     const value = card.value;
-    if (value === '3') return (card.suit === ledSuit) ? 1 : 0;
-
     const isSingleSuitTrump = ['♦', '♥', '♠'].includes(gameType);
+
+    // 1. Ако се играе на Боя и играч пусне Тройка от КOЗОВИЯ цвят (Цакане)
+    if (isSingleSuitTrump && card.suit === gameType && ledSuit !== gameType) {
+        return 10; // Тройката коз получава сила 10, което бие абсолютно всяка нормална боя (макс нормална сила е 9)
+    }
+
+    // 2. Стандартна Тройка в цвета на ръката (Без цакане)
+    if (value === '3') {
+        return (card.suit === ledSuit) ? 1 : 0;
+    }
+
+    // 3. Цакане с нормален коз (7-Вале) върху обикновена боя
     if (isSingleSuitTrump && card.suit === gameType && ledSuit !== gameType) {
         const trumpPowerMap = { '7': 20, '8': 21, 'Q': 22, 'K': 23, '10': 24, 'A': 25, '9': 26, 'J': 27 };
         return trumpPowerMap[value] || 0;
     }
 
+    // Изчистване на карти от чужд цвят (грешна боя)
     if (card.suit !== ledSuit && (!isSingleSuitTrump || card.suit !== gameType)) {
         return 0;
     }
 
+    // Сила при Козов режим (Всичко коз или съвпадаща козова боя)
     if (gameType === 'ВСИЧКО_КОЗ' || (isSingleSuitTrump && card.suit === gameType)) {
         const powerMap = { '7': 2, '8': 3, 'Q': 4, 'K': 5, '10': 6, 'A': 7, '9': 8, 'J': 9 };
         return powerMap[value] || 0;
     } 
     
+    // Сила при Без Коз / Некозов цвят
     const powerMap = { '7': 2, '8': 3, '9': 4, 'J': 5, 'Q': 6, 'K': 7, '10': 8, 'A': 9 };
     return powerMap[value] || 0;
 }
@@ -262,20 +277,12 @@ function compareAndFinalizeAnnouncements() {
         let totalPts = allBids[bestTriadPlayer].triads.reduce((sum, t) => sum + t.points, 0);
         let txt = allBids[bestTriadPlayer].triads.map(t => t.text).join(', ');
         gameState.announcements[bestTriadPlayer].points += totalPts;
-        if (gameState.announcements[bestTriadPlayer].text === "Няма") {
-            gameState.announcements[bestTriadPlayer].text = txt;
-        } else {
-            gameState.announcements[bestTriadPlayer].text += " | " + txt;
-        }
-    }
-}
-
-function assignNamesToPlayers() {
-    let availableNames = ["Гого", "Виктор", "Моньо"];
-    let shuffledNames = shuffle([...availableNames]);
-    players.forEach((id, index) => {
-        playerNames[id] = shuffledNames[index];
-    });
+	 if (gameState.announcements[bestTriadPlayer].text === "Няма") {
+		gameState.announcements[bestTriadPlayer].text = txt;
+		} else {
+			gameState.announcements[bestTriadPlayer].text += " | " + txt;
+		}
+	}
 }
 
 function startNewRound() {
@@ -283,35 +290,40 @@ function startNewRound() {
     gameState.currentTrick = [];
     gameState.ledSuit = null;
     gameState.phase = 'BIDDING';
-    gameState.highestBid = { type: null, value: 0, playerId: null };
-    gameState.passCount = 0;
-gameState.lastTrickWinner = null;
-gameState.belotDeclared = {};
-gameState.totalTricksPlayed = 0;
-if (gameState.dealerIndex === -1) {
-    gameState.dealerIndex = Math.floor(Math.random() * 3);
-} else {
-    gameState.dealerIndex = (gameState.dealerIndex + 2) % 3;
-}
-players.forEach(id => {
-    gameState.hands[id] = [];
-    gameState.roundScores[id] = 0;
-    gameState.announcements[id] = {
-        points: 0,
-        text: "Няма"
+    gameState.highestBid = {
+        type: null,
+        value: 0,
+        playerId: null
     };
-    gameState.belotDeclared[id] = false;
-    if (gameState.totalScores[id] === undefined) gameState.totalScores[id] = 0;
-});
-let currentDealIndex = (gameState.dealerIndex + 2) % 3;
-for (let k = 0; k < 3; k++) {
-    let pId = players[currentDealIndex];
-    gameState.hands[pId].push(...gameState.deck.splice(0, 6));
-    sortHand(gameState.hands[pId], 'БЕЗ_КОЗ');
-    currentDealIndex = (currentDealIndex + 2) % 3;
-}
-gameState.currentTurnIndex = (gameState.dealerIndex + 2) % 3;
-sendGameStateToAll();
+    gameState.passCount = 0;
+    gameState.lastTrickWinner = null;
+    gameState.belotDeclared = {};
+    gameState.totalTricksPlayed = 0;
+    gameState.lastCardPlayedTime = 0;
+    if (gameState.dealerIndex === -1) {
+        gameState.dealerIndex = Math.floor(Math.random() * 3);
+    } else {
+        gameState.dealerIndex = (gameState.dealerIndex + 2) % 3;
+    }
+    players.forEach(id => {
+        gameState.hands[id] = [];
+        gameState.roundScores[id] = 0;
+        gameState.announcements[id] = {
+            points: 0,
+            text: "Няма"
+        };
+        gameState.belotDeclared[id] = false;
+        if (gameState.totalScores[id] === undefined) gameState.totalScores[id] = 0;
+    });
+    let currentDealIndex = (gameState.dealerIndex + 2) % 3;
+    for (let k = 0; k < 3; k++) {
+        let pId = players[currentDealIndex];
+        gameState.hands[pId].push(...gameState.deck.splice(0, 6));
+        sortHand(gameState.hands[pId], 'БЕЗ_КОЗ');
+        currentDealIndex = (currentDealIndex + 2) % 3;
+    }
+    gameState.currentTurnIndex = (gameState.dealerIndex + 2) % 3;
+    sendGameStateToAll();
 }
 
 function finishDealing() {
@@ -451,10 +463,12 @@ io.on('connection', (socket) => {
     } else {
         return socket.disconnect();
     }
-    if (players.length === 3) {
-        assignNamesToPlayers();
-        startNewRound();
-    }
+    socket.on('joinGame', (customName) => {
+        playerNames[socket.id] = customName || "Играч " + (players.indexOf(socket.id) + 1);
+        if (players.length === 3 && Object.keys(playerNames).length === 3) {
+            startNewRound();
+        }
+    });
     socket.on('submitBid', (bidType) => {
         if (gameState.phase !== 'BIDDING' || players[gameState.currentTurnIndex] !== socket.id) return;
         if (bidType === 'ПАС') {
@@ -487,6 +501,11 @@ io.on('connection', (socket) => {
         if (gameState.phase !== 'PLAYING') return;
         const playerIndex = players.indexOf(socket.id);
         if (playerIndex !== gameState.currentTurnIndex) return;
+        const currentTime = Date.now();
+        if (currentTime - gameState.lastCardPlayedTime < 2000) {
+            socket.emit('errorMsg', 'Моля, изчакайте анимацията да приключи преди следващия ход!');
+            return;
+        }
         const card = gameState.hands[socket.id][cardIndex];
         if (gameState.currentTrick.length > 0 && card.value !== '3') {
             const hasLedSuit = gameState.hands[socket.id].some(c => c.suit === gameState.ledSuit);
@@ -520,6 +539,7 @@ io.on('connection', (socket) => {
                 }
             }
         }
+        gameState.lastCardPlayedTime = currentTime;
         if (gameState.currentTrick.length === 0) gameState.ledSuit = card.suit;
         gameState.hands[socket.id].splice(cardIndex, 1);
         gameState.currentTrick.push({
@@ -530,7 +550,7 @@ io.on('connection', (socket) => {
         if (gameState.currentTrick.length === 3) {
             gameState.totalTricksPlayed++;
             setTimeout(() => {
-                let winnerCardItem = gameState.currentTrick[0];
+                let winnerCardItem = gameState.currentTrick[0]; // КОРЕКЦИЯ: winnerCardItem сочи точно към първата хвърлена карта за старт на сравнението!
                 let maxPower = getCardPower(winnerCardItem.card, gameState.ledSuit, gameState.gameType);
                 for (let i = 1; i < 3; i++) {
                     let currentPower = getCardPower(gameState.currentTrick[i].card, gameState.ledSuit, gameState.gameType);
