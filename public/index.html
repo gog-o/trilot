@@ -162,9 +162,17 @@
             document.getElementById('an-indicator').innerText = `Вашите анонси в играта: ${state.announcementText} (+${state.announcementPoints} т.)`;
         }
 
-        if (state.playerNamesMap && state.playerNamesMap[state.currentTurn]) {
-            const activeName = state.playerNamesMap[state.currentTurn];
-            document.getElementById('turn-indicator').innerText = (state.currentTurn === socket.id) ? "ВАШ РЕД Е!" : `На ход е: ${activeName}`;
+         if (state.phase === 'BIDDING') {
+            const currentHighest = state.highestBid.type ? `${state.highestBid.type}` : 'Няма';
+            document.getElementById('game-info').innerText = `Фаза: НАДДАВАНЕ | Текущ анонс: ${currentHighest}`;
+            document.getElementById('bidding-panel').style.display = (state.currentTurn === socket.id) ? 'block' : 'none';
+            document.getElementById('an-indicator').innerText = "Вашите анонси: Изчисляват се...";
+        } else {
+            document.getElementById('game-info').innerText = `Фаза: ИГРА | Договор: ${state.gameType}`;
+            document.getElementById('bidding-panel').style.display = 'none';
+            
+            // КОРЕКЦИЯ: Показва голямото общо съобщение от сървъра за зачетените комбинации на масата!
+            document.getElementById('an-indicator').innerText = state.globalAnnouncementsText;
         }
 
         const myCardsDiv = document.getElementById('my-cards');
